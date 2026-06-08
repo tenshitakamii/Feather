@@ -1,0 +1,26 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch: # Thêm cái này để bạn có thể bấm nút chạy tay bất cứ lúc nào
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Feather Frontend
+      run: |
+        cd feather_frontend
+        cargo build --release
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: feather-windows-exe
+        path: feather_frontend/target/release/*.exe
