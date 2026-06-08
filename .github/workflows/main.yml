@@ -17,32 +17,38 @@ jobs:
     - name: Download and Setup libmpv (Windows Dev Files)
       shell: pwsh
       run: |
-        # 1. Tạo thư mục tạm
-        New-Item -ItemType Directory -Force -Path D:\mpv-dev
+        $ErrorActionPreference = 'Stop'
+        $devDir = "D:\mpv-dev"
+        New-Item -ItemType Directory -Force -Path $devDir | Out-Null
         
-        # 2. Tự động gọi API của GitHub để lấy link bản mpv-dev mới nhất (Tránh lỗi link chết/404)
+        Write-Host "Tìm link tải thư viện mpv-dev mới nhất..."
         $apiResult = Invoke-RestMethod -Uri "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
         $asset = $apiResult.assets | Where-Object { $_.name -like "mpv-dev-x86_64-*.7z" } | Select-Object -First 1
-        $url = $asset.browser_download_url
         
-        Write-Host "Đang tiến hành tải thư viện từ: $url"
-        Invoke-WebRequest -Uri $url -OutFile D:\mpv-dev\mpv-dev.7z
+        Write-Host "Đang tải: $($asset.browser_download_url)"
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$devDir\mpv-dev.7z"
         
-        # 3. Giải nén gói vừa tải
-        7z x D:\mpv-dev\mpv-dev.7z -oD:\mpv-dev -y
+        Write-Host "Đang giải nén..."
+        7z x "$devDir\mpv-dev.7z" -o"$devDir" -y | Out-Null
         
-        # 4. Tìm vị trí file mpv.lib để liên kết với Rust
-        $libFile = Get-ChildItem -Path D:\mpv-dev -Filter "mpv.lib" -Recurse | Select-Object -First 1
-        if ($null -eq $libFile) {
-            Write-Error "Không tìm thấy file mpv.lib sau khi giải nén!"
+        # Mấu chốt nằm ở đây: Tìm file libmpv.dll.a (hoặc bất kỳ file .a nào của mpv)
+        $importLib = Get-ChildItem -Path $devDir -Filter "*mpv*.a" -Recurse | Select-Object -First 1
+        
+        if ($null -ne $importLib) {
+            $libDir = $importLib.DirectoryName
+            $targetLib = Join-Path -Path $libDir -ChildPath "mpv.lib"
+            
+            # Đổi tên file .a thành mpv.lib để chiều lòng MSVC linker của Rust
+            Copy-Item $importLib.FullName -Destination $targetLib
+            Write-Host "Đã đổi tên $($importLib.Name) thành mpv.lib thành công tại $libDir"
+            
+            # Ghi đường dẫn chuẩn vào biến môi trường cho Rust
+            "LIB=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "RUSTFLAGS=-L native=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+        } else {
+            Write-Error "Không tìm thấy file liên kết (.a) nào trong gói mpv-dev!"
             exit 1
         }
-        $libDir = $libFile.DirectoryName
-        Write-Host "Đã tìm thấy thư mục lib tại: $libDir"
-        
-        # 5. Ghi vào biến môi trường theo chuẩn GitHub Actions dành cho PowerShell (pwsh)
-        "LIB=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-        "RUSTFLAGS=-L native=$libDir" | Out-File -FilePath $env:GITHUB_ENV -Append
 
     - name: Build Feather Frontend
       run: |
@@ -52,12 +58,7 @@ jobs:
     - name: Copy libmpv DLL to Release Folder
       shell: pwsh
       run: |
-        # Quét tìm file .dll để copy vào chung một thư mục chạy với file .exe
         $dllFile = Get-ChildItem -Path D:\mpv-dev -Filter "*mpv*.dll" -Recurse | Select-Object -First 1
-        if ($null -eq $dllFile) {
-            Write-Error "Không tìm thấy file mpv DLL!"
-            exit 1
-        }
         Copy-Item $dllFile.FullName -Destination "feather_frontend\target\release\"
 
     - name: Upload Artifact
