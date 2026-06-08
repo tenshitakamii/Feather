@@ -1,7 +1,7 @@
 name: Build Windows EXE
 
 on:
-  workflow_dispatch: # Thêm cái này để bạn có thể bấm nút chạy tay bất cứ lúc nào
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,13 +14,43 @@ jobs:
     - name: Setup Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Download and Setup libmpv (Windows Dev Files)
+      shell: pwsh
+      run: |
+        # 1. Tạo thư mục tạm để chứa file của mpv
+        New-Item -ItemType Directory -Force -Path D:\mpv-dev
+        
+        # 2. Tải gói thư viện lập trình của mpv dành cho Windows x64
+        $url = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260608/mpv-dev-x86_64-20260608-git-6444c05.7z"
+        Invoke-WebRequest -Uri $url -OutFile D:\mpv-dev\mpv-dev.7z
+        
+        # 3. Giải nén gói vừa tải bằng 7z (máy ảo của GitHub tích hợp sẵn)
+        7z x D:\mpv-dev\mpv-dev.7z -oD:\mpv-dev -y
+        
+        # 4. Tìm vị trí chính xác của file mpv.lib để tránh lỗi sai tên folder lồng bên trong
+        $libFile = Get-ChildItem -Path D:\mpv-dev -Filter "mpv.lib" -Recurse | Select-Object -First 1
+        $libDir = $libFile.DirectoryName
+        
+        # 5. Đưa đường dẫn vào biến môi trường hệ thống để Rust Linker tự động nhận diện diện
+        echo "LIB=$libDir" >> $env:GITHUB_ENV
+        echo "RUSTFLAGS=-L native=$libDir" >> $env:GITHUB_ENV
+
     - name: Build Feather Frontend
       run: |
         cd feather_frontend
         cargo build --release
 
+    - name: Copy libmpv DLL to Release Folder
+      shell: pwsh
+      run: |
+        # Tìm file dll để đóng gói chung, chạy app Windows bắt buộc phải có file dll này nằm cạnh file .exe
+        $dllFile = Get-ChildItem -Path D:\mpv-dev -Filter "libmpv-2.dll" -Recurse | Select-Object -First 1
+        Copy-Item $dllFile.FullName -Destination "feather_frontend\target\release\"
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: feather-windows-exe
-        path: feather_frontend/target/release/*.exe
+        path: |
+          feather_frontend/target/release/*.exe
+          feather_frontend/target/release/*.dll
